@@ -1,0 +1,229 @@
+#!/bin/bash
+#
+# MIT License
+#
+# Copyright (c) 2025 Kafka Liu
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+
+# sbctl - sing-box wrapper for macOS
+
+CONFIG_DIR="$HOME/.sing_box"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+SING_BOX_BIN="${SING_BOX_BIN:-sing-box}"   # 可通过环境变量指定 sing-box 路径
+REMOTE_URL="${REMOTE_URL:-}"               # 必须通过环境变量传入
+
+usage() {
+    echo "用法: $0 [命令] [参数]"
+    echo
+    echo "命令:"
+    echo "  fetch                       获取远程 config.json 并保存到 $CONFIG_FILE"
+    echo "  list                        列出 config.json 中可用的代理名称"
+    echo "  proxy <proxy_name>          启动 HTTP/SOCKS 代理模式 (需设置环境变量生效)"
+    echo "  tun   <proxy_name> <proc...> 启动 TUN 模式，仅指定进程走代理，其他直连"
+    echo "  mix   <proxy_name> <proc...> 混合模式：指定进程走 TUN，其他进程直连，同时保留 HTTP/SOCKS 代理功能"
+    echo 
+    echo "示例:"
+    echo "  $0 fetch"
+    echo "  $0 list"
+    echo "  $0 proxy \"HK-01\""
+    echo "  $0 tun \"HK-01\" \"Google Chrome\" Telegram"
+    echo "  $0 mix \"HK-01\" \"Google Chrome\" Telegram"
+    echo
+    exit 1
+}
+
+cmd_fetch() {
+    mkdir -p "$CONFIG_DIR"
+    echo "从 $REMOTE_URL 获取配置..."
+    curl -fsSL "$REMOTE_URL" -o "$CONFIG_FILE" || {
+        echo "获取配置失败"
+        exit 1
+    }
+    echo "已保存到 $CONFIG_FILE"
+}
+
+cmd_list() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "找不到配置文件: $CONFIG_FILE"
+        exit 1
+    fi
+    jq -r '.outbounds[]?.tag // empty' "$CONFIG_FILE"
+}
+
+cmd_proxy() {
+    if [ $# -lt 1 ]; then
+        echo "缺少代理名称"
+        usage
+    fi
+    local proxy_name="$1"
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "找不到配置文件: $CONFIG_FILE"
+        exit 1
+    fi
+
+    TMP_CONFIG="$(mktemp)"
+
+    # 移除 tun，仅保留 DNS，避免全部走流量。
+    jq --arg name "$proxy_name" '
+      .inbounds |= map(select(.type != "tun"))                        
+      | .route.rules = [ { "protocol": "dns", "outbound": "dns" } ]   
+      | .route.final = $name                                          
+    ' "$CONFIG_FILE" > "$TMP_CONFIG"
+
+    echo "使用代理 [$proxy_name] 启动 sing-box (HTTP模式)..."
+    echo "注意: 只有设置 http_proxy/https_proxy/all_proxy 时才会生效"
+    
+    sudo "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    rm -f "$TMP_CONFIG"
+}
+
+cmd_tun() {
+    if [ $# -lt 2 ]; then
+        echo "错误: 需要指定代理名称和至少一个进程正则/关键词"
+        usage
+    fi
+
+    local proxy_name="$1"
+    shift 
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "找不到配置文件: $CONFIG_FILE"
+        exit 1
+    fi
+
+    local proc_json="["
+    first=true
+    for proc in "$@"; do
+        if [ "$first" = true ]; then first=false; else proc_json+=","; fi
+        # 注意：这里为了方便，直接传入用户输入的字符串作为正则
+        # 如果你输入 "Chrome"，它在正则里等同于包含 "Chrome"
+        proc_json+="\"$proc\""
+    done
+    proc_json+="]"
+
+    TMP_CONFIG="$(mktemp)"
+
+    # 正则匹配进程名。输入 "Chrome" 实际上会匹配所有路径中包含 "Chrome" 的进程
+    # 例如：/Applications/Google Chrome.app/...
+    
+    jq --arg name "$proxy_name" --argjson procs "$proc_json" '
+      .inbounds = [{
+          "type": "tun",
+          "inet4_address": ["172.19.0.1/30"],
+          "auto_route": true,
+          "stack": "system",
+          "sniff": true
+      }]
+      | .route.rules = [ 
+          { "protocol": "dns", "outbound": "dns" },
+          { "process_path_regex": $procs, "outbound": $name }
+        ]
+      | .route.final = "direct"
+    ' "$CONFIG_FILE" > "$TMP_CONFIG"
+
+    echo "=== 启动 TUN 模式 (正则/路径匹配) ==="
+    echo "代理节点: $proxy_name"
+    echo "匹配规则: ${proc_json}"
+    echo "其他流量: 直连 (Direct)"
+    echo "配置文件: $TMP_CONFIG"
+    echo "需要管理员权限配置网络接口..."
+
+    # 环境变量修复。依据自己所用 sing-box 版本和订阅的配置进行调整。
+    sudo ENABLE_DEPRECATED_TUN_ADDRESS_X=true "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    
+    rm -f "$TMP_CONFIG"
+}
+
+cmd_mix() {
+    if [ $# -lt 2 ]; then
+        echo "错误: 需要指定代理名称和至少一个进程正则/关键词"
+        echo "用法: $0 mix <代理名称> <进程1> [进程2...]"
+        exit 1
+    fi
+
+    local proxy_name="$1"
+    shift 
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "找不到配置文件: $CONFIG_FILE"
+        exit 1
+    fi
+
+    local proc_json="["
+    first=true
+    for proc in "$@"; do
+        if [ "$first" = true ]; then first=false; else proc_json+=","; fi
+        proc_json+="\"$proc\""
+    done
+    proc_json+="]"
+
+    TMP_CONFIG="$(mktemp)"
+
+    # === 核心逻辑 ===
+    # 1. 清理旧的 tun (如果有)，保留 HTTP/SOCKS (mixed/http 等)，并追加新的 tun (带 tag: tun-in)
+    # 2. 路由规则：
+    #    a. DNS -> dns
+    #    b. 命中进程正则 -> 代理节点
+    #    c. 来源是 tun-in 但没命中正则 -> 直连 (防止误伤)
+    #    d. Final (通常是 HTTP 端口来的流量) -> 代理节点
+    
+    jq --arg name "$proxy_name" --argjson procs "$proc_json" '
+      .inbounds |= map(select(.type != "tun")) + [{
+          "type": "tun",
+          "tag": "tun-in",
+          "inet4_address": ["172.19.0.1/30"],
+          "auto_route": true,
+          "stack": "system",
+          "sniff": true
+      }]
+      | .route.rules = [ 
+          { "protocol": "dns", "outbound": "dns" },
+          { "process_path_regex": $procs, "outbound": $name },
+          { "inbound": "tun-in", "outbound": "direct" }
+        ]
+      | .route.final = $name
+    ' "$CONFIG_FILE" > "$TMP_CONFIG"
+
+    echo "=== 启动 混合模式 (Mix Mode) ==="
+    echo "代理节点: $proxy_name"
+    echo "TUN 规则: 仅代理进程 ${proc_json}，其余 TUN 流量直连"
+    echo "HTTP规则: 端口流量默认走代理"
+    echo "配置文件: $TMP_CONFIG"
+    echo "需要管理员权限配置网络接口..."
+
+    sudo ENABLE_DEPRECATED_TUN_ADDRESS_X=true "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    
+    rm -f "$TMP_CONFIG"
+}
+
+# ========== 主入口 ==========
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    fetch) cmd_fetch "$@" ;;
+    list)  cmd_list "$@" ;;
+    proxy) cmd_proxy "$@" ;;
+    tun)   cmd_tun "$@" ;;
+    mix)   cmd_mix "$@" ;;
+    *)     usage ;;
+esac
