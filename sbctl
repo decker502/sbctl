@@ -81,6 +81,7 @@ cmd_proxy() {
     fi
 
     TMP_CONFIG="$(mktemp)"
+    trap 'rm -f "$TMP_CONFIG"' EXIT
 
     # 移除 tun，仅保留 DNS，避免全部走流量。
     jq --arg name "$proxy_name" '
@@ -121,6 +122,7 @@ cmd_tun() {
     proc_json+="]"
 
     TMP_CONFIG="$(mktemp)"
+    trap 'rm -f "$TMP_CONFIG"' EXIT
 
     # 正则匹配进程名。输入 "Chrome" 实际上会匹配所有路径中包含 "Chrome" 的进程
     # 例如：/Applications/Google Chrome.app/...
@@ -177,6 +179,7 @@ cmd_mix() {
     proc_json+="]"
 
     TMP_CONFIG="$(mktemp)"
+    trap 'rm -f "$TMP_CONFIG"' EXIT
 
     # === 核心逻辑 ===
     # 1. 清理旧的 tun (如果有)，保留 HTTP/SOCKS (mixed/http 等)，并追加新的 tun (带 tag: tun-in)
