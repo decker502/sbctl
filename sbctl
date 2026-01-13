@@ -42,7 +42,8 @@ usage() {
     echo "用法: $0 [命令] [参数]"
     echo
     echo "命令:"
-    echo "  fetch                       获取远程 config.json 并保存到 $CONFIG_FILE"
+    echo "  fetch [proxy]               获取远程 config.json 并保存到 $CONFIG_FILE"
+    echo "                              可选指定代理，如: fetch http://127.0.0.1:7890"
     echo "  list                        列出 config.json 中可用的代理名称"
     echo "  proxy <proxy_name>          启动 HTTP/SOCKS 代理模式 (需设置环境变量生效)"
     echo "  tun   <proxy_name> <proc...> 启动 TUN 模式，仅指定进程走代理，其他直连"
@@ -50,6 +51,7 @@ usage() {
     echo
     echo "示例:"
     echo "  $0 fetch"
+    echo "  $0 fetch http://127.0.0.1:7890"
     echo "  $0 list"
     echo "  $0 proxy \"HK-01\""
     echo "  $0 tun \"HK-01\" \"Google Chrome\" Telegram"
@@ -60,15 +62,31 @@ usage() {
     echo "  可通过环境变量自定义:"
     echo "    CLASH_API_PORT   API 端口 (默认: 9090)"
     echo "    CLASH_API_SECRET 访问密码 (默认: 空)"
+    echo "    FETCH_PROXY      fetch 命令使用的代理"
     echo
     exit 1
 }
 
 cmd_fetch() {
+    local proxy="${1:-$FETCH_PROXY}"
+    local curl_opts="-fsSL"
+
     mkdir -p "$CONFIG_DIR"
-    echo "从 $REMOTE_URL 获取配置..."
-    curl -fsSL "$REMOTE_URL" -o "$CONFIG_FILE" || {
+
+    if [ -n "$proxy" ]; then
+        echo "使用代理 $proxy 获取配置..."
+        curl_opts="$curl_opts -x $proxy"
+    else
+        echo "从 $REMOTE_URL 获取配置..."
+    fi
+
+    curl $curl_opts "$REMOTE_URL" -o "$CONFIG_FILE" || {
         echo "获取配置失败"
+        if [ -z "$proxy" ]; then
+            echo "提示: 可以指定代理重试: $0 fetch <proxy>"
+            echo "      例如: $0 fetch http://127.0.0.1:7890"
+            echo "      或设置环境变量: FETCH_PROXY=http://127.0.0.1:7890 $0 fetch"
+        fi
         exit 1
     }
     echo "已保存到 $CONFIG_FILE"
