@@ -48,7 +48,7 @@ fi
 # 配置文件目录（优先使用环境变量，否则使用脚本目录下的 .sing_box）
 CONFIG_DIR="${CONFIG_DIR:-$SCRIPT_DIR/.sing_box}"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-SING_BOX_BIN="${SING_BOX_BIN:-sing-box}"
+SING_BOX_BIN="${SING_BOX_BIN:-/usr/bin/sing-box}"
 REMOTE_URL="${REMOTE_URL:-}"
 UI_DIR="$SCRIPT_DIR/ui"
 
@@ -187,65 +187,84 @@ cmd_tun() {
     done
     proc_json+="]"
 
-    TMP_CONFIG="$(mktemp)"
+    TMP_CONFIG="$SCRIPT_DIR/.tmp_config.json"
     CGROUP_NAME="sbctl_proxy"
     CGROUP_PATH="/sys/fs/cgroup/$CGROUP_NAME"
     PROXY_PORT=12345
     MONITOR_PID=""
-    KNOWN_PIDS_FILE="/tmp/sbctl_known_pids"
+    KNOWN_PIDS_FILE="$SCRIPT_DIR/.sbctl_known_pids"
 
     # 使用 redirect 模式，配合 cgroup + iptables 只代理特定进程
+    # 完全重建配置，只提取代理节点，不依赖订阅的复杂结构
     jq --arg name "$proxy_name" --argjson procs "$proc_json" \
        --arg ui_dir "$UI_DIR" \
        --arg api_port "$CLASH_API_PORT" \
        --arg api_secret "$CLASH_API_SECRET" \
        --argjson proxy_port "$PROXY_PORT" '
-      .outbounds = (
-        [.outbounds[] | select(.tag != "direct")] +
-        [{ "type": "direct", "tag": "direct" }]
-      )
-      | .dns.servers = [
-        { "tag": "localdns", "type": "udp", "server": "8.8.8.8", "server_port": 53 },
-        { "tag": "proxydns", "type": "udp", "server": "1.1.1.1", "server_port": 53 }
-      ]
-      | .dns.rules = [
-          { "outbound": "any", "server": "localdns" },
-          { "query_type": ["A", "AAAA"], "server": "proxydns" }
-        ]
-      | .dns.final = "localdns"
-      | del(.dns.fakeip)
-      | del(.dns.independent_cache)
-      # 使用 mixed 入站（HTTP + SOCKS5）
-      | .inbounds = [
-        {
-          "type": "mixed",
-          "tag": "mixed-in",
-          "listen": "127.0.0.1",
-          "listen_port": $proxy_port,
-          "sniff": true
+      # 只提取真正的代理节点（排除 selector, urltest, direct, block, dns 等）
+      def is_proxy_node: .type as $t | $t == "vless" or $t == "vmess" or $t == "trojan" or $t == "shadowsocks" or $t == "hysteria" or $t == "hysteria2" or $t == "tuic" or $t == "wireguard" or $t == "ssh" or $t == "http" or $t == "socks";
+
+      # 提取所有代理节点
+      [.outbounds[] | select(is_proxy_node)] as $proxies |
+
+      # 完全重建配置
+      {
+        "log": {
+          "disabled": false,
+          "level": "info",
+          "timestamp": true
         },
-        {
-          "type": "redirect",
-          "tag": "redirect-in",
-          "listen": "127.0.0.1",
-          "listen_port": ($proxy_port + 1),
-          "sniff": true
+        "dns": {
+          "servers": [
+            { "tag": "dns-local", "type": "udp", "server": "223.5.5.5", "server_port": 53 },
+            { "tag": "dns-remote", "type": "udp", "server": "8.8.8.8", "server_port": 53 }
+          ],
+          "final": "dns-remote"
+        },
+        "inbounds": [
+          {
+            "type": "mixed",
+            "tag": "mixed-in",
+            "listen": "127.0.0.1",
+            "listen_port": $proxy_port,
+            "sniff": true,
+            "sniff_override_destination": true
+          },
+          {
+            "type": "redirect",
+            "tag": "redirect-in",
+            "listen": "127.0.0.1",
+            "listen_port": ($proxy_port + 1),
+            "sniff": true,
+            "sniff_override_destination": true
+          }
+        ],
+        "outbounds": (
+          $proxies + [
+            { "type": "direct", "tag": "direct" },
+            { "type": "block", "tag": "REJECT" }
+          ]
+        ),
+        "route": {
+          "rules": [
+            { "protocol": "dns", "action": "hijack-dns" }
+          ],
+          "final": $name,
+          "default_domain_resolver": "dns-local"
+        },
+        "experimental": {
+          "cache_file": {
+            "enabled": true,
+            "path": "cache.db",
+            "store_fakeip": false
+          },
+          "clash_api": {
+            "external_controller": ("127.0.0.1:" + $api_port),
+            "external_ui": $ui_dir,
+            "secret": $api_secret
+          }
         }
-      ]
-      | .route.rules = [
-          { "protocol": "dns", "action": "hijack-dns" },
-          { "process_path_regex": $procs, "outbound": $name }
-        ]
-      | .route.final = $name
-      | .route.default_domain_resolver = "localdns"
-      | del(.route.rule_set)
-      | del(.ntp)
-      | if .experimental.cache_file then .experimental.cache_file.store_fakeip = false else . end
-      | .experimental.clash_api = {
-          "external_controller": ("127.0.0.1:" + $api_port),
-          "external_ui": $ui_dir,
-          "secret": $api_secret
-        }
+      }
     ' "$CONFIG_FILE" > "$TMP_CONFIG"
 
     # 后台进程监控函数 - 自动将新进程加入 cgroup
@@ -332,7 +351,14 @@ cmd_tun() {
         echo "清理完成"
     }
 
-    trap cleanup EXIT INT TERM
+    # 信号处理：清理后正常退出
+    handle_signal() {
+        cleanup
+        exit 0
+    }
+
+    trap handle_signal INT TERM
+    trap cleanup EXIT
 
     echo "=== 启动进程级代理模式 ==="
     echo "代理节点: $proxy_name"
@@ -402,6 +428,7 @@ cmd_mix() {
           "stack": "system",
           "sniff": true
       }]
+      | .dns.strategy = "ipv4_only"
       | .route.rules = [
           { "protocol": "dns", "outbound": "dns" },
           { "process_path_regex": $procs, "outbound": $name },

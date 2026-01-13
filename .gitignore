@@ -2,3 +2,6 @@ start.sh
 cache.db
 .env
 install.sh
+.tmp_config.json
+.sbctl_known_pids
+.sing_box/

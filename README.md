@@ -15,7 +15,7 @@
 ## 系统要求
 
 - Linux (已测试 Ubuntu 24.04)
-- sing-box 1.10+
+- sing-box 1.12+
 - jq
 - cgroup v2
 - iptables
@@ -187,7 +187,7 @@ FETCH_PROXY=http://127.0.0.1:7890 ./sbctl fetch
 | `CLASH_API_PORT` | Web UI 端口 | 9090 |
 | `CLASH_API_SECRET` | Web UI 密码 | (空) |
 | `FETCH_PROXY` | fetch 命令使用的代理 | - |
-| `SING_BOX_BIN` | sing-box 路径 | sing-box |
+| `SING_BOX_BIN` | sing-box 路径 | /usr/bin/sing-box |
 
 ## 故障排除
 
