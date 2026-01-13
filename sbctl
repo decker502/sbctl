@@ -23,15 +23,32 @@
 # SOFTWARE.
 #
 
-# sbctl - sing-box wrapper for macOS
+# sbctl - sing-box wrapper for Linux
+
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 自动加载 .env 配置文件
+ENV_FILE="$SCRIPT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+    while IFS='=' read -r key value; do
+        # 跳过注释和空行
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+        # 去除空格和引号
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\(.*\)'$/\1/")
+        # 只设置未定义的变量（允许环境变量覆盖）
+        if [ -z "${!key}" ]; then
+            export "$key=$value"
+        fi
+    done < "$ENV_FILE"
+fi
 
 CONFIG_DIR="$HOME/.sing_box"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-SING_BOX_BIN="${SING_BOX_BIN:-sing-box}"   # 可通过环境变量指定 sing-box 路径
-REMOTE_URL="${REMOTE_URL:-}"               # 必须通过环境变量传入
-
-# 获取脚本所在目录（用于定位 ui 文件夹）
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SING_BOX_BIN="${SING_BOX_BIN:-sing-box}"
+REMOTE_URL="${REMOTE_URL:-}"
 UI_DIR="$SCRIPT_DIR/ui"
 
 # Clash API 配置
