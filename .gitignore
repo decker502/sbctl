@@ -1,5 +1,4 @@
 start.sh
-ui/
 cache.db
 .env
 install.sh
