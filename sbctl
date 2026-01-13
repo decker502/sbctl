@@ -45,7 +45,8 @@ if [ -f "$ENV_FILE" ]; then
     done < "$ENV_FILE"
 fi
 
-CONFIG_DIR="$HOME/.sing_box"
+# 配置文件目录（优先使用环境变量，否则使用脚本目录下的 .sing_box）
+CONFIG_DIR="${CONFIG_DIR:-$SCRIPT_DIR/.sing_box}"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 SING_BOX_BIN="${SING_BOX_BIN:-sing-box}"
 REMOTE_URL="${REMOTE_URL:-}"
