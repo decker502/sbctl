@@ -9,6 +9,8 @@
 - **Web UI**：集成 yacd 控制面板，实时查看连接状态
 - **无侵入**：不影响其他应用的网络连接（包括其他代理工具如 v2rayn）
 - **自动清理**：退出时自动清理 iptables 规则和临时文件
+- **自动加载配置**：sbctl 自动读取同目录下的 .env 文件
+- **systemd 服务**：支持安装为系统服务，开机自启
 
 ## 系统要求
 
@@ -32,7 +34,7 @@ cp .env.example .env
 vim .env
 ```
 
-### 安装为系统服务（可选）
+### 安装为系统服务（推荐）
 
 ```bash
 # 安装服务
@@ -41,8 +43,10 @@ sudo ./install-service.sh
 # 编辑配置
 sudo vim /opt/sbctl/.env
 
-# 获取订阅配置
+# 获取订阅配置（如有网络问题可指定代理）
 sudo /opt/sbctl/sbctl fetch
+# 或
+sudo /opt/sbctl/sbctl fetch http://127.0.0.1:7890
 
 # 启动服务
 sudo systemctl start sbctl
@@ -73,20 +77,33 @@ PROCESS_NAMES="antigravity chrome"
 
 # Web UI 端口（可选）
 CLASH_API_PORT=9090
+
+# fetch 命令使用的代理（可选）
+FETCH_PROXY=http://127.0.0.1:7890
 ```
 
 ## 使用方法
 
+> **提示**：`sbctl` 会自动加载同目录下的 `.env` 文件，可直接使用 `./sbctl` 或通过 `./start.sh` 包装使用。
+
 ### 获取配置
 
 ```bash
-./start.sh fetch
+# 直接获取
+./sbctl fetch
+
+# 通过代理获取（网络问题时使用）
+./sbctl fetch http://127.0.0.1:7890
+./sbctl fetch socks5://127.0.0.1:1080
+
+# 或使用环境变量
+FETCH_PROXY=http://127.0.0.1:7890 ./sbctl fetch
 ```
 
 ### 查看可用节点
 
 ```bash
-./start.sh list
+./sbctl list
 ```
 
 ### 启动进程级代理
@@ -100,6 +117,9 @@ CLASH_API_PORT=9090
 
 # 指定节点和进程
 ./start.sh tun "HK-01" antigravity chrome
+
+# 或直接使用 sbctl
+./sbctl tun "HK-01" antigravity chrome
 ```
 
 ### 启动后
@@ -150,11 +170,11 @@ CLASH_API_PORT=9090
 
 | 命令 | 说明 |
 |------|------|
-| `./start.sh fetch` | 获取远程配置 |
-| `./start.sh list` | 列出可用代理节点 |
-| `./start.sh tun [节点] [进程...]` | 启动进程级代理 |
-| `./start.sh proxy <节点>` | 启动 HTTP/SOCKS 代理模式 |
-| `./start.sh mix <节点> <进程...>` | 混合模式 |
+| `./sbctl fetch [proxy]` | 获取远程配置，可选指定代理 |
+| `./sbctl list` | 列出可用代理节点 |
+| `./sbctl tun <节点> <进程...>` | 启动进程级代理 |
+| `./sbctl proxy <节点>` | 启动 HTTP/SOCKS 代理模式 |
+| `./sbctl mix <节点> <进程...>` | 混合模式 |
 | `./clean.sh` | 清理残留配置 |
 
 ## 环境变量
@@ -166,6 +186,7 @@ CLASH_API_PORT=9090
 | `PROCESS_NAMES` | 目标进程列表 | - |
 | `CLASH_API_PORT` | Web UI 端口 | 9090 |
 | `CLASH_API_SECRET` | Web UI 密码 | (空) |
+| `FETCH_PROXY` | fetch 命令使用的代理 | - |
 | `SING_BOX_BIN` | sing-box 路径 | sing-box |
 
 ## 故障排除
@@ -197,6 +218,12 @@ CLASH_API_PORT=9090
 curl -s http://127.0.0.1:9090/rules | jq '.'
 ```
 
+### 查看当前连接
+
+```bash
+curl -s http://127.0.0.1:9090/connections | jq '.connections[] | {host: .metadata.host, process: .metadata.process, chains: .chains}'
+```
+
 ## License
 
 MIT License
@@ -209,3 +236,6 @@ MIT License
 - 添加 Linux 进程级代理支持（cgroup + iptables）
 - 集成 yacd Web UI
 - 添加进程自动监控功能
+- 添加 systemd 服务支持
+- fetch 命令支持代理
+- sbctl 自动加载 .env 配置
