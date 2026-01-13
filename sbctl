@@ -55,6 +55,13 @@ UI_DIR="$SCRIPT_DIR/ui"
 CLASH_API_PORT="${CLASH_API_PORT:-9090}"
 CLASH_API_SECRET="${CLASH_API_SECRET:-}"
 
+# 如果已经是 root，不需要 sudo
+if [ "$EUID" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 usage() {
     echo "用法: $0 [命令] [参数]"
     echo
@@ -150,7 +157,7 @@ cmd_proxy() {
     echo "注意: 只有设置 http_proxy/https_proxy/all_proxy 时才会生效"
     echo "Web UI: http://127.0.0.1:${CLASH_API_PORT}/ui"
 
-    sudo "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    $SUDO "$SING_BOX_BIN" run -c "$TMP_CONFIG"
     rm -f "$TMP_CONFIG"
 }
 
@@ -253,7 +260,7 @@ cmd_tun() {
                     if ! grep -q "^$pid$" "$KNOWN_PIDS_FILE" 2>/dev/null; then
                         # 检查进程是否还存在
                         if [ -d "/proc/$pid" ]; then
-                            echo "$pid" | sudo tee "$CGROUP_PATH/cgroup.procs" > /dev/null 2>&1 && \
+                            echo "$pid" | $SUDO tee "$CGROUP_PATH/cgroup.procs" > /dev/null 2>&1 && \
                             echo "$pid" >> "$KNOWN_PIDS_FILE" && \
                             echo "[监控] 自动将进程 $pid ($proc) 加入代理组"
                         fi
@@ -269,40 +276,40 @@ cmd_tun() {
 
         # 创建 cgroup (cgroup2)
         if [ ! -d "$CGROUP_PATH" ]; then
-            sudo mkdir -p "$CGROUP_PATH"
+            $SUDO mkdir -p "$CGROUP_PATH"
         fi
 
         # 获取 cgroup 的 classid
         CGROUP_ID=$(stat -c %i "$CGROUP_PATH" 2>/dev/null || echo "")
 
         # 清理旧规则
-        sudo iptables -t nat -D OUTPUT -j SBCTL_OUTPUT 2>/dev/null || true
-        sudo iptables -t nat -F SBCTL_OUTPUT 2>/dev/null || true
-        sudo iptables -t nat -X SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -D OUTPUT -j SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -F SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -X SBCTL_OUTPUT 2>/dev/null || true
 
         # 创建新规则链
-        sudo iptables -t nat -N SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -N SBCTL_OUTPUT 2>/dev/null || true
 
         # 本地地址不代理
-        sudo iptables -t nat -A SBCTL_OUTPUT -d 127.0.0.0/8 -j RETURN
-        sudo iptables -t nat -A SBCTL_OUTPUT -d 10.0.0.0/8 -j RETURN
-        sudo iptables -t nat -A SBCTL_OUTPUT -d 172.16.0.0/12 -j RETURN
-        sudo iptables -t nat -A SBCTL_OUTPUT -d 192.168.0.0/16 -j RETURN
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -d 127.0.0.0/8 -j RETURN
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -d 10.0.0.0/8 -j RETURN
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -d 172.16.0.0/12 -j RETURN
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -d 192.168.0.0/16 -j RETURN
 
         # 排除 root 用户的流量（sing-box 以 root 运行）
-        sudo iptables -t nat -A SBCTL_OUTPUT -m owner --uid-owner 0 -j RETURN
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -m owner --uid-owner 0 -j RETURN
 
         # 使用 cgroup 匹配，将流量重定向到代理端口
-        sudo iptables -t nat -A SBCTL_OUTPUT -p tcp -m cgroup --path "$CGROUP_NAME" -j REDIRECT --to-ports $((PROXY_PORT + 1))
+        $SUDO iptables -t nat -A SBCTL_OUTPUT -p tcp -m cgroup --path "$CGROUP_NAME" -j REDIRECT --to-ports $((PROXY_PORT + 1))
 
         # 应用规则到 OUTPUT 链
-        sudo iptables -t nat -A OUTPUT -j SBCTL_OUTPUT
+        $SUDO iptables -t nat -A OUTPUT -j SBCTL_OUTPUT
 
         # 将当前配置的进程加入 cgroup
         for proc in "$@"; do
             pids=$(pgrep -f "$proc" 2>/dev/null || true)
             for pid in $pids; do
-                echo "$pid" | sudo tee "$CGROUP_PATH/cgroup.procs" > /dev/null 2>&1 || true
+                echo "$pid" | $SUDO tee "$CGROUP_PATH/cgroup.procs" > /dev/null 2>&1 || true
                 echo "$pid" >> "$KNOWN_PIDS_FILE" 2>/dev/null || true
                 echo "  已将进程 $pid ($proc) 加入代理组"
             done
@@ -317,9 +324,9 @@ cmd_tun() {
             kill "$MONITOR_PID" 2>/dev/null || true
             wait "$MONITOR_PID" 2>/dev/null || true
         fi
-        sudo iptables -t nat -D OUTPUT -j SBCTL_OUTPUT 2>/dev/null || true
-        sudo iptables -t nat -F SBCTL_OUTPUT 2>/dev/null || true
-        sudo iptables -t nat -X SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -D OUTPUT -j SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -F SBCTL_OUTPUT 2>/dev/null || true
+        $SUDO iptables -t nat -X SBCTL_OUTPUT 2>/dev/null || true
         rm -f "$TMP_CONFIG" "$KNOWN_PIDS_FILE"
         echo "清理完成"
     }
@@ -345,7 +352,7 @@ cmd_tun() {
 
     echo ""
     echo "启动 sing-box..."
-    sudo "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    $SUDO "$SING_BOX_BIN" run -c "$TMP_CONFIG"
 }
 
 cmd_mix() {
@@ -415,7 +422,7 @@ cmd_mix() {
     echo "Web UI: http://127.0.0.1:${CLASH_API_PORT}/ui"
     echo "需要管理员权限配置网络接口..."
 
-    sudo ENABLE_DEPRECATED_TUN_ADDRESS_X=true "$SING_BOX_BIN" run -c "$TMP_CONFIG"
+    $SUDO ENABLE_DEPRECATED_TUN_ADDRESS_X=true "$SING_BOX_BIN" run -c "$TMP_CONFIG"
     
     rm -f "$TMP_CONFIG"
 }
