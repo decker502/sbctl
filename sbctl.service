@@ -1,0 +1,25 @@
+[Unit]
+Description=sbctl - sing-box 进程级代理控制器
+Documentation=https://github.com/decker502/sbctl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sbctl
+EnvironmentFile=/opt/sbctl/.env
+ExecStart=/opt/sbctl/sbctl tun ${PROXY_NAME} ${PROCESS_NAMES}
+ExecStop=/bin/kill -SIGTERM $MAINPID
+ExecStopPost=/opt/sbctl/clean.sh
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# 安全设置
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

@@ -32,6 +32,31 @@ cp .env.example .env
 vim .env
 ```
 
+### 安装为系统服务（可选）
+
+```bash
+# 安装服务
+sudo ./install-service.sh
+
+# 编辑配置
+sudo vim /opt/sbctl/.env
+
+# 获取订阅配置
+sudo /opt/sbctl/sbctl fetch
+
+# 启动服务
+sudo systemctl start sbctl
+
+# 开机自启
+sudo systemctl enable sbctl
+
+# 查看状态
+sudo systemctl status sbctl
+
+# 查看日志
+sudo journalctl -u sbctl -f
+```
+
 ## 配置
 
 编辑 `.env` 文件：
