@@ -175,3 +175,12 @@ curl -s http://127.0.0.1:9090/rules | jq '.'
 ## License
 
 MIT License
+
+## 致谢
+
+本项目 fork 自 [kafkaliu/like-a-rolling-stone](https://github.com/kafkaliu/like-a-rolling-stone)，感谢原作者 [@kafkaliu](https://github.com/kafkaliu) 的出色工作。
+
+主要改进：
+- 添加 Linux 进程级代理支持（cgroup + iptables）
+- 集成 yacd Web UI
+- 添加进程自动监控功能
